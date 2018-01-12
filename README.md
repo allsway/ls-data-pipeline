@@ -1,12 +1,12 @@
 # LiveStories data pipeline 
 
-#### Project
+### Project
 Create a data pipeline between LiveStories' S3 tsv source data and a developed data science/analytics infrastructure.  
 
-#### Current problem 
+### Current problem 
 Currently LiveStories data is only available for internal use in tsv format or via API, both of which are not optimal for running data science queries on this ~100GB dataset.  
 
-#### Project outline
+### Project outline
 During this project, I will:
 - transmit the original data set (and reguarly updated data in batch) to Microsoft Azure 
 - create a data store that is better suited to run data science queries direclty on the dataset
