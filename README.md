@@ -17,3 +17,13 @@ During this project, I will:
 Load testing opportunities:
 - load test with 10x (100x?) the current dataset, as the company is planning to have data growth
 
+### Architecture
+![alt text](https://www.draw.io/?lightbox=1&highlight=0000ff&edit=_blank&layers=1&nav=1&title=livestories_pipeline.html#Uhttps%3A%2F%2Fdrive.google.com%2Fuc%3Fid%3D1xKrkBIKC571WuXr1-E4uBHz9VcyyDayU%26export%3Ddownload)
+
+### Metric results
+
+```
+indicator_id | adj_correlation    | correlation          | locales  | raw_distance       | weighted_distance
+--------------+--------------------+----------------------+----------+--------------------+---------------------
+   ACS_B08103 | 1.1096630046674558 | -0.13506359742698623 | US:ST:VT | 3.3366612682082786 |  3.5619920053480287
+```
