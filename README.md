@@ -18,7 +18,7 @@ Load testing opportunities:
 - load test with 10x (100x?) the current dataset, as the company is planning to have data growth
 
 ### Architecture
-![Pipeline]
+![alt text](https://github.com/allsway/ls-data-pipeline/blob/master/livestories_pipeline.png)
 
 ### Metric results
 
