@@ -20,7 +20,7 @@ Load testing opportunities:
 ### Architecture
 ![alt text](https://github.com/allsway/ls-data-pipeline/blob/master/livestories_pipeline.png)
 
-### Metric results
+### Metric example
 
 ```
 cqlsh:livestories> select * from adjacency_matrix  limit 24 ;
