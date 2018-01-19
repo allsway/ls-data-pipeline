@@ -18,7 +18,7 @@ Load testing opportunities:
 - load test with 10x (100x?) the current dataset, as the company is planning to have data growth
 
 ### Architecture
-![alt text](https://www.draw.io/?lightbox=1&highlight=0000ff&edit=_blank&layers=1&nav=1&title=livestories_pipeline.html#Uhttps%3A%2F%2Fdrive.google.com%2Fuc%3Fid%3D1xKrkBIKC571WuXr1-E4uBHz9VcyyDayU%26export%3Ddownload)
+![Pipeline](https://www.draw.io/?lightbox=1&highlight=0000ff&edit=_blank&layers=1&nav=1&title=livestories_pipeline.html#Uhttps%3A%2F%2Fdrive.google.com%2Fuc%3Fid%3D1xKrkBIKC571WuXr1-E4uBHz9VcyyDayU%26export%3Ddownload)
 
 ### Metric results
 
