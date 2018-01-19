@@ -13,9 +13,8 @@ from calculate_metrics import *
 import numpy as np
 import pandas as pd
 from cassandra.cluster import Cluster
-#import spark-s3
+from pyspark.sql.functions import lit
 
-#import pyspark_cassandra
 
 
 def get_key():
@@ -38,10 +37,6 @@ def get_schema():
 
 
 
-#def connect_to_datastore():
-	#config = new HBaseConfiguration()
-    #hbaseContext = new HBaseContext(sc, config)
-
 # save calculations to s3
 def write_back_to_s3(df,key):
 	s3_save_addr = "s3a://" + get_output_bucket() + "/output/" + key +  "_updated.csv"
@@ -49,28 +44,33 @@ def write_back_to_s3(df,key):
 
 # connect to the data store
 def connect_to_datastore(df):
+	print(df.show())
 	conf = SparkConf()
 	conf.setMaster("172.31.16.59")
 	conf.setAppName("Spark Cassandra connector")
 	conf.set("spark.cassandra.connection.host","http://127.0.0.1")
 	#sc = sc("spark://172-31-16-59:7077", "test", conf)
 	
-	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="single_column", keyspace="livestories").save()
+	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="adjacency_matrix", keyspace="livestories").save()
 
 
 # Handle files
 def get_files(objects, sqlContext):
 	for file in objects['Contents']:
 		name = file['Key']
+		indicator_id = name.split('.')[0]
 		print (file['Key'])
 		filename = 's3a://' + get_bucket() +  '/' + name
 		df = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
 		print (df.show())
 		
-		distance_matrix = calculate_distance(df,name)
+		distance_matrix, ref = calculate_distance(df,name)
 		return_df = sqlContext.createDataFrame(distance_matrix)
+		return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
+		return_df = return_df.withColumn('ref_location', lit(ref))
+		print(return_df.show())
 		connect_to_datastore(return_df)
-		write_back_to_s3(return_df, file['Key'])	
+		write_back_to_s3(return_df, name)	
 
 
 # Connect to our S3 storage 
@@ -99,7 +99,7 @@ def calculate_distance(df,name):
 	ref = 'US:ST:MN'
 	#df.select('locale').map(lambda x: compare_locations(new_df, ref, locale_class))
 	dists = compare_locations(new_df,ref,locale_class)
-	return dists
+	return dists, ref
 	
 
 config = configparser.ConfigParser()
