@@ -1,14 +1,20 @@
 from pyspark import SparkContext, SparkConf
 from boto.s3.connection import S3Connection
+import boto3
 import configparser
 import pyspark
 import sys
 from pyspark.sql import Row
 from pyspark.sql import SQLContext
+from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.column import Column, _to_java_column, _to_seq
-from pyspark.mllib.stat import Statistics
-import numpy
+from calculate_metrics import *
+import numpy as np
+import pandas as pd
+from cassandra.cluster import Cluster
+#import spark-s3
+
 #import pyspark_cassandra
 
 
@@ -20,6 +26,15 @@ def get_secret():
 
 def get_bucket():
 	return config.get('Params', 'root_bucket')
+	
+def get_output_bucket():
+	return config.get('Params', 'output_bucket')
+	
+def get_ips():
+	return config.get('Dataconnector', 'ips')
+	
+def get_schema():
+	return config.get('Dataconnector', 'schema')
 
 
 
@@ -27,52 +42,65 @@ def get_bucket():
 	#config = new HBaseConfiguration()
     #hbaseContext = new HBaseContext(sc, config)
 
+# save calculations to s3
+def write_back_to_s3(df,key):
+	s3_save_addr = "s3a://" + get_output_bucket() + "/output/" + key +  "_updated.csv"
+	df.write.csv(s3_save_addr)
 
-def connect_to_datastore():
-	conf = SparkConf() \
-		.setAppName("PySpark Cassandra Connection") \
-		.setMaster("spark://:7077") \
-		.set("spark.cassandra.connection.host", "cas-1")
+# connect to the data store
+def connect_to_datastore(df):
+	conf = SparkConf()
+	conf.setMaster("172.31.16.59")
+	conf.setAppName("Spark Cassandra connector")
+	conf.set("spark.cassandra.connection.host","http://127.0.0.1")
+	#sc = sc("spark://172-31-16-59:7077", "test", conf)
+	
+	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="single_column", keyspace="livestories").save()
 
-	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="kv", keyspace="test").save()
 
-
-def write_back_to_s3(df):
-	df.write.parquet("s3a://" + get_new_bucket() + "/test.parquet",mode=overwrite)
+# Handle files
+def get_files(objects, sqlContext):
+	for file in objects['Contents']:
+		name = file['Key']
+		print (file['Key'])
+		filename = 's3a://' + get_bucket() +  '/' + name
+		df = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
+		print (df.show())
+		
+		distance_matrix = calculate_distance(df,name)
+		return_df = sqlContext.createDataFrame(distance_matrix)
+		connect_to_datastore(return_df)
+		write_back_to_s3(return_df, file['Key'])	
 
 
 # Connect to our S3 storage 
 def connect_to_s3():
+
 	connection = S3Connection(get_key(), get_secret())
 	bucket = connection.get_bucket(get_bucket())
-	sc = pyspark.SparkContext(appName="Test")
 
-	# Filter by new data? 
-	for file in bucket:
-		# Transform to HDFS table
-		
-	#	indicator = rdd.map(lambda x: Row(id=x[1], locale=x[2], date_range=x[3], dimension=x[4], type_of_locale=x[5], category=x[6]))
-		sqlc = SQLContext(sc)
-		df = sqlc.read.csv(file)
-		#df = sqlContext.createDataFrame(indicator)
-		print (df[df.locale].show())
-		calculate_distance(df,sqlContext)
-		
-		
-def calculate_distance(df, sqlContext):
-
+	client = boto3.client('s3')
+	bucket = get_bucket()
 	
-	locales = df.select(df("locale")).distinct
-	print (locales)
-	
-	average = avg(df["locale"])
-	#zscores = udf(lambda row: (x - average) / standard_dev)
-
-#	print (zscores)
-
-#	u = df.groupBy("locale").agg(df.date_range, avg("locale"), stddev_pop("locale"))		
+	objects = client.list_objects(Bucket = bucket)
+	conf = SparkConf().setAppName('text')
+	sc = pyspark.SparkContext()
+	sqlContext = SQLContext(sc)
+	get_files(objects,sqlContext)
 	
 
+		
+def calculate_distance(df,name):
+	# Parallelize this tomorrow
+	indicator_id = name.split('.')[0]
+	new_df = df.toPandas()
+	locale_class = 'US:ST'
+
+	ref = 'US:ST:MN'
+	#df.select('locale').map(lambda x: compare_locations(new_df, ref, locale_class))
+	dists = compare_locations(new_df,ref,locale_class)
+	return dists
+	
 
 config = configparser.ConfigParser()
 config.read(sys.argv[1])

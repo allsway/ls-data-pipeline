@@ -3,10 +3,18 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.txt
+calculate_metrics.p*
+metastore_db/*
+*.dat
+*.ctrl
+*.lck
+*.jar
+*.properties
+
 # C extensions
 *.so
 
-# Distribution / packaging
+# D
 .Python
 env/
 build/
