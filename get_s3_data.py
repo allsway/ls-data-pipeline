@@ -57,9 +57,7 @@ def connect_to_datastore(df):
 	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="adjacency_matrix", keyspace="livestories").save()
 
 
-def get_file_contents(file):
-	sc = pyspark.SparkContext()
-	sqlContext = SQLContext(sc)
+def get_file_contents(file,sqlContext):
 	print (file)
 	name = file['Key']
 	indicator_id = name.split('.')[0]
@@ -72,13 +70,17 @@ def get_file_contents(file):
 
 
 # Handle files
-def get_files(objects):
+def get_files(objects,sqlContext):
 	list = objects['Contents']
 	#print(list)
 	
+#	distance_matrix = map(get_file_contents(list,sqlContext),list)
 #	distance_matrix, ref = map(get_file_contents(list,sqlContext))
 	for file in objects['Contents']:
-		for distance_matrix in map(get_file_contents(file)):		
+		filelist = 's3a://' + get_bucket() +  '/A*.csv' 
+		print (filelist)
+	#	print (file)
+	"""	for distance_matrix in map(get_file_contents(file)):		
 			print(distance_matrix)
 			return_df = sqlContext.createDataFrame(distance_matrix)
 			return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
@@ -86,6 +88,7 @@ def get_files(objects):
 			print(return_df.show())
 			connect_to_datastore(return_df)
 			write_back_to_s3(return_df, name)	
+		"""
 		
 
 
@@ -100,9 +103,9 @@ def connect_to_s3():
 	
 	objects = client.list_objects(Bucket = bucket)
 	conf = SparkConf().setAppName('text')
-#	sc = pyspark.SparkContext()
-#	sqlContext = SQLContext(sc)
-	get_files(objects)
+	sc = pyspark.SparkContext()
+	sqlContext = SQLContext(sc)
+	get_files(objects,sqlContext)
 	
 
 		
