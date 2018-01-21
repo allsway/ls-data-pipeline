@@ -34,11 +34,16 @@ def get_ips():
 	
 def get_schema():
 	return config.get('Dataconnector', 'schema')
+	
+def get_master():
+	return config.get('Dataconnector', 'master')
 
 
 
 # save calculations to s3
 def write_back_to_s3(df,key):
+	print( sc.textFile("s3://" + get_output_bucket()/ + "output/ " + key + ".csv"))
+
 	s3_save_addr = "s3a://" + get_output_bucket() + "/output/" + key +  "_updated.csv"
 	df.write.csv(s3_save_addr)
 
@@ -48,29 +53,40 @@ def connect_to_datastore(df):
 	conf = SparkConf()
 	conf.setMaster("172.31.16.59")
 	conf.setAppName("Spark Cassandra connector")
-	conf.set("spark.cassandra.connection.host","http://127.0.0.1")
-	#sc = sc("spark://172-31-16-59:7077", "test", conf)
-	
+	conf.set("spark.cassandra.connection.host","http://127.0.0.1")	
 	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="adjacency_matrix", keyspace="livestories").save()
 
 
+def get_file_contents(file):
+	sc = pyspark.SparkContext()
+	sqlContext = SQLContext(sc)
+	print (file)
+	name = file['Key']
+	indicator_id = name.split('.')[0]
+	print (file['Key'])
+	filename = 's3a://' + get_bucket() +  '/' + name
+	df = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
+	print (df.show())
+	
+	distance_matrix, ref = calculate_distance(df,name)
+
+
 # Handle files
-def get_files(objects, sqlContext):
+def get_files(objects):
+	list = objects['Contents']
+	#print(list)
+	
+#	distance_matrix, ref = map(get_file_contents(list,sqlContext))
 	for file in objects['Contents']:
-		name = file['Key']
-		indicator_id = name.split('.')[0]
-		print (file['Key'])
-		filename = 's3a://' + get_bucket() +  '/' + name
-		df = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
-		print (df.show())
+		for distance_matrix in map(get_file_contents(file)):		
+			print(distance_matrix)
+			return_df = sqlContext.createDataFrame(distance_matrix)
+			return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
+			return_df = return_df.withColumn('ref_location', lit(ref))
+			print(return_df.show())
+			connect_to_datastore(return_df)
+			write_back_to_s3(return_df, name)	
 		
-		distance_matrix, ref = calculate_distance(df,name)
-		return_df = sqlContext.createDataFrame(distance_matrix)
-		return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
-		return_df = return_df.withColumn('ref_location', lit(ref))
-		print(return_df.show())
-		connect_to_datastore(return_df)
-		write_back_to_s3(return_df, name)	
 
 
 # Connect to our S3 storage 
@@ -84,9 +100,9 @@ def connect_to_s3():
 	
 	objects = client.list_objects(Bucket = bucket)
 	conf = SparkConf().setAppName('text')
-	sc = pyspark.SparkContext()
-	sqlContext = SQLContext(sc)
-	get_files(objects,sqlContext)
+#	sc = pyspark.SparkContext()
+#	sqlContext = SQLContext(sc)
+	get_files(objects)
 	
 
 		
