@@ -57,44 +57,41 @@ def connect_to_datastore(df):
 	df.write.format("org.apache.spark.sql.cassandra").mode('append').options(table="adjacency_matrix", keyspace="livestories").save()
 
 
-def get_file_contents(file,sqlContext):
+def get_file_contents(file):
 	print (file)
-	name = file['Key']
+	if file['Key'] is not None:
+		name = file['Key']
 	indicator_id = name.split('.')[0]
-	print (file['Key'])
 	filename = 's3a://' + get_bucket() +  '/' + name
 	df = sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
 	print (df.show())
 	
-	distance_matrix, ref = calculate_distance(df,name)
+	distance_matrix, ref = calculate_distance(df,indicator_id)
+	print (distance_matrix)
+	return distance_matrix, ref;
+
+
+def process_matrix(matrix):
+	return_df = sqlContext.createDataFrame(distance_matrix)
+	return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
+	return_df = return_df.withColumn('ref_location', lit(ref))
+	return return_df
 
 
 # Handle files
-def get_files(objects,sqlContext):
+def get_files(objects):
 	list = objects['Contents']
-	#print(list)
-	
-#	distance_matrix = map(get_file_contents(list,sqlContext),list)
-#	distance_matrix, ref = map(get_file_contents(list,sqlContext))
-	for file in objects['Contents']:
-		filelist = 's3a://' + get_bucket() +  '/A*.csv' 
-		print (filelist)
-	#	print (file)
-	"""	for distance_matrix in map(get_file_contents(file)):		
-			print(distance_matrix)
-			return_df = sqlContext.createDataFrame(distance_matrix)
-			return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
-			return_df = return_df.withColumn('ref_location', lit(ref))
-			print(return_df.show())
-			connect_to_datastore(return_df)
-			write_back_to_s3(return_df, name)	
-		"""
-		
+	distance_matrix,ref = map(get_file_contents, list).reduceByKey(lambda a, b:  a + b)
+	print (distance_matrix)	
+	return_df = map(process_matrix,distance_matrix)	
+
+	connect_to_datastore(return_df)
+	write_back_to_s3(return_df, name)	
 
 
 # Connect to our S3 storage 
 def connect_to_s3():
-
+	global sqlContext
 	connection = S3Connection(get_key(), get_secret())
 	bucket = connection.get_bucket(get_bucket())
 
@@ -104,14 +101,14 @@ def connect_to_s3():
 	objects = client.list_objects(Bucket = bucket)
 	conf = SparkConf().setAppName('text')
 	sc = pyspark.SparkContext()
+#	s3keys = sc.parallelize()
 	sqlContext = SQLContext(sc)
-	get_files(objects,sqlContext)
+	get_files(objects)
 	
 
 		
 def calculate_distance(df,name):
 	# Parallelize this tomorrow
-	indicator_id = name.split('.')[0]
 	new_df = df.toPandas()
 	locale_class = 'US:ST'
 
