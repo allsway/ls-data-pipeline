@@ -16,8 +16,6 @@ import pandas as pd
 from cassandra.cluster import Cluster
 from pyspark.sql.functions import lit
 
-
-
 def get_key():
     return config.get('Params', 'aws_key')
 
@@ -44,7 +42,7 @@ def get_pass():
 
 # save calculations to s3
 def write_back_to_s3(df,key):
-	print( sc.textFile("s3://" + get_output_bucket()/ + "output/ " + key + ".csv"))
+	print( global_settings.sc.textFile("s3://" + get_output_bucket()/ + "output/ " + key + ".csv"))
 
 	s3_save_addr = "s3a://" + get_output_bucket() + "/output/" + key +  "_updated.csv"
 	df.write.csv(s3_save_addr)
@@ -82,8 +80,8 @@ def connect_to_datastore(df):
     # Saving data to a JDBC source
   #  jdbcDF.write \
    #     .format("jdbc") \
-    #    .option("url", "jdbc:postgresql:dbserver") \
-     #   .option("dbtable", "schema.tablename") \
+    #    .option("url", "jdbc:postgresql:" + db_name) \
+     #   .option("dbtable", "metrics") \
     #    .option("user", "username") \
      #   .option("password", "password") \
    #     .save()
@@ -96,6 +94,7 @@ def get_file_contents(file):
 		name = file['Key']
 	indicator_id = name.split('.')[0]
 	filename = 's3a://' + get_bucket() +  '/' + name
+	# wildcard 
 	df = global_settings.sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
 	print (df.show())
 	
@@ -114,10 +113,10 @@ def process_matrix(matrix):
 # Handle files
 def get_files(objects):
 	list = objects['Contents']
-	#distance_matrix,ref = map(get_file_contents, list).reduceByKey(lambda a, b:  a + b)
-	#return_df = map(process_matrix,distance_matrix)	
+	distance_matrix,ref = map(get_file_contents, list).reduceByKey()
+	return_df = map(process_matrix,distance_matrix)	
 
-	connect_to_datastore(list)
+	#connect_to_datastore(list)
 	#write_back_to_s3(return_df, name)	
 
 
@@ -131,8 +130,8 @@ def connect_to_s3():
 	
 	objects = client.list_objects(Bucket = bucket)
 	conf = SparkConf().setAppName('text')
-	sc = pyspark.SparkContext()
-	global_settings.sqlContext = SQLContext(sc)
+	global_settings.sc = pyspark.SparkContext()
+	global_settings.sqlContext = SQLContext(global_settings.sc)
 	get_files(objects)
 	
 
@@ -144,7 +143,7 @@ def calculate_distance(df,name):
 
 	ref = 'US:ST:MN'
 	#df.select('locale').map(lambda x: compare_locations(new_df, ref, locale_class))
-	dists = compare_locations(df,ref,locale_class)
+	dists = compare_locations(df,ref,locale_class,global_settings.sc)
 	print (dists)
 	return dists, ref
 	
