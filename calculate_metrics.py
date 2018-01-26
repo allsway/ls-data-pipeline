@@ -21,34 +21,66 @@ from pyspark.ml.linalg import Vectors
 from pyspark.ml.feature import VectorAssembler
 	
 
-
-def get_zscore_comparison(df):
-	print('before filtering')
-	df.describe(['value']).show()
-
-	#df.select('value').groupBy().mean().show()
-	# Get the average values for this dimension
-	#average = df.select('value').groupBy().mean().head()['avg(value)']	
-
-	# Filters table to dimension we want to get mean and average for
-	print('after filtering')
-	#dimension_df = df.where(col("dimension_labels").isin(dim.dimension_labels))
-	# now for each value in each dimension, we'll calculate the zscore given the dimension stddev and mean 
-
+# returns the mean and stddev of each dimension
+def get_dim_stats(df):
 	group_stats = df.describe(['value']).collect()
 	for row in group_stats:
 		if row.summary == 'mean':
 			mean = float(row.value)
 		if row.summary == 'stddev':
-			stddev = float(row.value)
+			if row.value == 'nan':
+				stddev = 0
+			else:
+				stddev = float(row.value)
+	return mean,stddev
+
+# computes the zscore and euclidean distance for each 
+def get_zscore_comparison(df):
+	df.describe(['value']).show()
+	dims  = df.select('dimension_labels').distinct().collect()
+
+	# Filters table to dimension we want to get mean and average for
+	# doing this way for now..
+	for dim in dims:
+		dimension_df = df.where(col("dimension_labels").isin(dim.dimension_labels))
+		print('Dimension DF:')
+		dimension_df.show()
+		# figure out how to handle if stddev cannot be computed later, right now we probably won't have any actual instances of this
+		if dimension_df.count() > 1:	
+			mean,stddev = get_dim_stats(dimension_df)
+			# takes in dataframe limited to single dimension, returns key of location, value of zscore
+			# reduces by zscore to produce vectors like so [(US:CA -> (zscore, zscore, zscore)
+			zscores = dimension_df.rdd.map(lambda row: (row[2],(float(row[5]) - mean) / stddev)).groupByKey().map(lambda x: (x[0], list(x[1])))
+			# makes an n*n comparison matrix for every vector in our set 
+			location_zscores = zscores.cartesian(zscores)
+			print(zscores.take(5))
+			print(location_zscores).take(5)
+		
+			# returns the cartesian grouping of every location, zscore vector
+			# [(US:CA -> (zscore, zscore, zscore), US:WA (zscore, zscore, zscore)), (), ()....]
+			# row[0][0], row[1][0] are our location keys
+			# row[0][1], row[1][1] is the zscore vector
+			# We have a list of tuples containing all vectors to compare:
+				# for every tuple return a tuple of the location comparison as the key
+				# and the euclidean distance between the two location values as the value
+			euclid_dist = location_zscores.map(lambda row: ( (row[0][0], row[1][0] ), spatial.distance.euclidean (list(row[0][1]), list(row[1][1])) if len(list(row[0][1])) == len(list(row[1][1])) else False ))
+			# get correlations between the two vectors
+			# returns the 
+			correlations = location_zscores.map(lambda row: ( (row[0][0], row[1][0] ), spatial.distance.cosine (list(row[0][1]), list(row[1][1])) if len(list(row[0][1])) == len(list(row[1][1])) else False ))
+
+			print(euclid_dist.take(10))
+			print(correlations.take(10))
+
+
+
+
+	# now for each value in each dimension, we'll calculate the zscore given the dimension stddev and mean 
+	
 	#print(dimension_df.show())
 	
-	
-	# schema = StructType([StructField("x", IntegerType(), True)])
-	# row[2] is location, row[5] is the value, calculates zscore for each value and returns loc, zscore 
 	# size: 201428
 	# size 33871
-	zscores = df.rdd.map(lambda row: (row[2],(float(row[5]) - mean) / stddev)).groupByKey().map(lambda x: (x[0], list(x[1])))
+	# row[2] is location, row[5] is the value, calculates zscore for each value and returns loc, zscore 
 	print('double iterate over all vectors')
 	
 	#final_rdd = global_settings.sc.union([zscores,zscores])
@@ -56,17 +88,7 @@ def get_zscore_comparison(df):
 	
 	print('flatmap Result:  ')
 
-	# returns the cartesian grouping of every location, zscore vector
-	# [(US:CA -> (zscore, zscore, zscore), US:WA (zscore, zscore, zscore)), (), ()....]
-	location_zscores = zscores.cartesian(zscores)
-	print(location_zscores).take(5)
-	# row[0][0], row[1][0] are our location keys
-	# row[0][1], row[1][1] is the zscore vector
-	# if we have a list of tuples:
-		# for every tuple return a tuple of the location comparison as the key
-		# and the euclidean distance between the two location values as the value
-	euclid_dist = location_zscores.map(lambda row: ( (row[0][0], row[1][0] ), spatial.distance.euclidean (list(row[0][1]), list(row[1][1])) if len(list(row[0][1])) == len(list(row[1][1])) else False ))
-	print(euclid_dist.take(10))
+
 	return euclid_dist
 
 
@@ -78,23 +100,6 @@ def euclidean(ref,val):
 	else:
 		return spatial.distance.euclidean(list(ref),list(val))
 
-def compare_row_to_zscores(row,zscores):
-	print('hi')
-	print(row.take(10))
-	print(zscores.take(10))
-
-
-def get_zscores(unique_labels,df):
-	# for each dimension, get mean and stddev
-	dimension_df = df.where(col("dimension_labels").isin(dim.dimension_labels))
-	group_stats = dimension_df.describe(['value']).collect()
-	for row in group_stats:
-		if row.summary == 'mean':
-			mean = float(row.value)
-		if row.summary == 'stddev':
-			stddev = float(row.value)
-	# now we have our mean and stddev for each dimension
-
 
 def compare_locations(df, ref_locale, locale_class, sc,dim_instances = 'all', interval = 'all'):
 	new_df = df
@@ -104,7 +109,6 @@ def compare_locations(df, ref_locale, locale_class, sc,dim_instances = 'all', in
 	new_df = new_df.where(col('locale_class').like('US') == False)
 	print('updated dataframe')
 	print(new_df.show())
-
 
 	# reduce to the date range of the reference location (map reduce on location min and max)
 	# Get a list of the unique dimensions and intervals
@@ -125,12 +129,6 @@ def compare_locations(df, ref_locale, locale_class, sc,dim_instances = 'all', in
 		#get_euclidian_dist(zscores,)
 	
 
-
-	#ref = df[location][zscores]
-	for loc in unique_locations:
-
-		comparision_vec = df[loc][zscores]
-		euc[i] = sp.spatial.distance.euclidean(u,v)
 
 	
 	return new_df
