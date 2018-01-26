@@ -3,7 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.txt
-calculate_metrics.p*
+*calculate_metrics.py.safe
+#calculate_metrics.p*
 metastore_db/*
 *.dat
 *.ctrl
