@@ -44,7 +44,6 @@ def get_distance(ref_locale,data):
     euc = np.zeros(len(locales)) #initialize distance array
     
     u = df[df.locale==ref_locale].zscore.values #reference vector
-	print(u)    
     #test to see if data actually contains reference locale
     if u.shape[0] == 0:
         raise ValueError('No data for refence location ({})'.format(ref_locale))

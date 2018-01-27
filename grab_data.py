@@ -10,6 +10,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import *
 from pyspark.sql.column import Column, _to_java_column, _to_seq
 from calculate_metrics import *
+#from calculate_metrics_numpy import *
 import global_settings 
 import numpy as np
 import pandas as pd
@@ -93,6 +94,8 @@ def get_file_contents(file):
 	if file['Key'] is not None:
 		name = file['Key']
 	indicator_id = name.split('.')[0]
+	#filename = 's3a://ls-livedata-ds/digested/data/BRFS500/observations/BRFSS500:24.L-D-I-V.idx.gz' 
+	#filename = 's3a://' + get_bucket() + '*/*/*/*/*/*/*'
 	filename = 's3a://' + get_bucket() +  '/' + name
 	# wildcard 
 	df = global_settings.sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
@@ -103,17 +106,19 @@ def get_file_contents(file):
 	return distance_matrix, ref;
 
 
-def process_matrix(matrix):
-	return_df = sqlContext.createDataFrame(distance_matrix)
-	return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
-	return_df = return_df.withColumn('ref_location', lit(ref))
-	return return_df
+def process_matrix(distance_matrix):
+	#print(distance_matrix.take(5))
+	#return_df = global_settings.sqlContext.createDataFrame(distance_matrix)
+	#return_df = distance_matrix
+	#return_df = return_df.withColumn('indicator_id',lit(indicator_id + '|' + ref))
+	#return_df = return_df.withColumn('ref_location', lit(ref))
+	return distance_matrix
 
 
 # Handle files
 def get_files(objects):
 	list = objects['Contents']
-	distance_matrix,ref = map(get_file_contents, list).reduceByKey()
+	distance_matrix,ref = map(get_file_contents, list)
 	return_df = map(process_matrix,distance_matrix)	
 
 	#connect_to_datastore(list)
@@ -122,6 +127,14 @@ def get_files(objects):
 
 # Connect to our S3 storage 
 def connect_to_s3():
+	conf = SparkConf().setAppName('text')
+	global_settings.sc = pyspark.SparkContext()
+	global_settings.sqlContext = SQLContext(global_settings.sc)
+
+	#filename = 's3://ls-livedata-ds/digested/data/US.GOV.CDC.NNDSS.SURVVHEPA:CHRONB/observations/US.GOV.CDC.NNDSS.SURVVHEPA:CHRONB:0.D-I-L-V.idx.gz' 
+	
+	#df = global_settings.sqlContext.read.format('com.databricks.spark.csv').options(header='true', inferschema='true').load(filename)
+
 	connection = S3Connection(get_key(), get_secret())
 	bucket = connection.get_bucket(get_bucket())
 
@@ -129,9 +142,6 @@ def connect_to_s3():
 	bucket = get_bucket()
 	
 	objects = client.list_objects(Bucket = bucket)
-	conf = SparkConf().setAppName('text')
-	global_settings.sc = pyspark.SparkContext()
-	global_settings.sqlContext = SQLContext(global_settings.sc)
 	get_files(objects)
 	
 

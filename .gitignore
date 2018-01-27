@@ -3,7 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.txt
+config.txt.livestories
 *calculate_metrics.py.safe
+*calculate_metrics_numpy.py
 #calculate_metrics.p*
 metastore_db/*
 *.dat
