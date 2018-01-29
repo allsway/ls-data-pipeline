@@ -44,7 +44,6 @@ def get_pass():
 # save calculations to s3
 def write_back_to_s3(df,key):
 	print( global_settings.sc.textFile("s3://" + get_output_bucket()/ + "output/ " + key + ".csv"))
-
 	s3_save_addr = "s3a://" + get_output_bucket() + "/output/" + key +  "_updated.csv"
 	df.write.csv(s3_save_addr)
 
@@ -94,7 +93,7 @@ def get_file_contents(file):
 	if file['Key'] is not None:
 		name = file['Key']
 	indicator_id = name.split('.')[0]
-	#filename = 's3a://ls-livedata-ds/digested/data/BRFS500/observations/BRFSS500:24.L-D-I-V.idx.gz' 
+	#filename = 's3a://' +get_bucket() +'/GOV.CA.CDPH.CDC.WONDER.OPIOID_1.L-D-I-V.idx.gz' 
 	#filename = 's3a://' + get_bucket() + '*/*/*/*/*/*/*'
 	filename = 's3a://' + get_bucket() +  '/' + name
 	# wildcard 
