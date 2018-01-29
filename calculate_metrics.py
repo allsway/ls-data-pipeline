@@ -38,29 +38,23 @@ def get_dim_stats(df):
 
 
 # returning overlap as the final
-
-#def check_euclid_distance():
 	
- 
-def map_euclid_distances(row,dates,dimensions):
-	#key = row[0][0], row[1][0]
-	loc1 = row[0][0][0]
-	loc2 = row[1][0][0]
-	dim1 = row[0][1][1]
-	dim2 = row[1][1][1]
-	time1 = row[0][1][0]
-	time2 = row[1][1][0]
-	value1 = row[0][1][2]
-	value1 = row[1][1][2]
-	print(dim1, dim2)
-	print('time')
-	print(time1,time2)
-	if dim1 not in dimensions.values[loc2] or time1 not in locations.values[loc2]:
-		# do nothing
-		return
-	elif len(list(row[0][1])) == len(list(row[1][1])):
-			spatial.distance.euclidean (list(row[0][1]), list(row[1][1])) 
 		
+# Returns the correlations for a 
+def get_correlations(ref,zscores,location_dimensions,location_dates):
+	ref_locale = zscores.filter(lambda x: (x[0][0] == ref.locale))
+	ref_locale = ref_locale.map(lambda x: ((x[0][0], x[0][1]),x[1][1] )).groupByKey().map(lambda x: (x[0], list(x[1])))
+	print('Reference location vector:')
+	print(ref_locale.take(20))
+	# filter out dates and dimensions that don't match our reference location
+	total_comparisons = zscores.filter(lambda x: (x[0][1] in location_dates))
+	total_comparisons = total_comparisons.filter(lambda x: (x[1][0] in location_dimensions))
+	total_comparisons = total_comparisons.filter(lambda x: (x[0][0] != ref.locale))
+	total_comparisons = total_comparisons.map(lambda x: ((x[0][0], x[0][1]), x[1][1])).groupByKey().map(lambda x: (x[0], list(x[1])))
+	reverse_loc = ref_locale.map(lambda x: ((x[0][1]), (x[0][0], x[1] )))
+	reverse_comps = total_comparisons.map(lambda x: ((x[0][1]), (x[0][0], x[1] )))
+	print(reverse_loc.take(20))
+	joined = reverse_loc.join(reverse_comps)
 
 
 # (loc, dimension) =>[y1 value, y2 value, y3 value] for CORRELATIONS
@@ -75,6 +69,10 @@ def get_euc_distances(ref,zscores,location_dimensions,location_dates):
 	#ref_locale = zscores.map(lambda x: (x[1][0][0], x[1][0][0]))
 	# returns an n*n comparison matrix for every (loc, loc, y1, y2) vector in our set 
 	# returns the cartesian grouping of every location, zscore vector
+	print('Returned zscores:')
+	print(zscores.take(10))
+	print(zscores.count())
+	print(zscores.map(lambda x: ((x[0][0]), x[0] )))
 	ref_locale = zscores.filter(lambda x: (x[0][0] == ref.locale))
 	ref_locale = ref_locale.map(lambda x: ((x[0][0], x[0][1]),x[1][1] )).groupByKey().map(lambda x: (x[0], list(x[1])))
 	print('Reference location vector:')
@@ -92,7 +90,6 @@ def get_euc_distances(ref,zscores,location_dimensions,location_dates):
 	reverse_loc = ref_locale.map(lambda x: ((x[0][1]), (x[0][0], x[1] )))
 	reverse_comps = total_comparisons.map(lambda x: ((x[0][1]), (x[0][0], x[1] )))
 	print('Joined tuples?')
-	print(reverse_loc.take(20))
 	joined = reverse_loc.join(reverse_comps)
 	print(joined.take(10))
 		
@@ -109,13 +106,10 @@ def get_euc_distances(ref,zscores,location_dimensions,location_dates):
 	
 	#filtered_vectors = location_zscores.filter(lambda row: row[1][0]  in (dates.value)[str(row[1][0])])
 
-	print('Filtered vector')
 	show_map = joined.map(lambda row: ((row[1][0][0], row[1][1][0], row[0]), row[1][0][1]))
-	print(show_map.take(10))
 		
 	euclid_dist = joined.map(lambda row: ( (row[0], row[1][0][0], row[1][1][0] ), 
 		spatial.distance.euclidean (row[1][0][1], row[1][1][1]) if len(row[1][0][1]) == len(row[1][1][1]) else False ))
-	#euclid_dist = location_zscores.map(lambda row: ( (row[0][0][0], row[1][0][0], row[0][0][1], row[1][0][1] ), spatial.distance.euclidean (list(row[0][1]), list(row[1][1])) if len(list(row[0][1])) == len(list(row[1][1])) else False ))
 	
 	print('Euclid dists: ')
 	print(euclid_dist.count())
@@ -123,28 +117,19 @@ def get_euc_distances(ref,zscores,location_dimensions,location_dates):
 	
 	# When you return the mean of the distances, also reduce the time key to the date range 
 	print('Euclid averages')
+	reduction = euclid_dist.reduceByKey(lambda row: row[0][0])
+	print(reduction.take(5))
+	reduction = euclid_dist.map(lambda row: ((row[0][1], row[0][2]), row[1] )).groupByKey().map(lambda x: (x[0], np.mean(list(x[1]))))
+	print(reduction.take(4))
+#	euclid_avgs = euclid_dist.map(lambda row: ((row[0][0][0], row[0][1][0]), row[1]))	
+#	 row[0][0] is first location, row[0][1] is second location
+#	euc_sums = euclid_dist.combineByKey(lambda value: (value, 1),
+#                             lambda x, value: (x[0] + value, x[1] + 1),
+#                             lambda x, y: (x[0] + y[0], x[1] + y[1]))
 
+#	print(euc_sums.take(5))
 	
-	#euclid_avgs = euclid_dist.map(lambda row: ((row[0][0][0], row[0][1][0]), row[1]))	
-	# row[0][0] is first location, row[0][1] is second location
-	#euc_sums = euclid_dist.combineByKey(lambda value: (value, 1),
-    #                         lambda x, value: (x[0] + value, x[1] + 1),
-    #                         lambda x, y: (x[0] + y[0], x[1] + y[1]))
 
-
-	
-	#print('Test for mapping to averages')
-	#print(euc_sums.take(100))
-	#print(euc_averages.take(100))
-	#return euc_averages
-	
-	# get correlations between the two vectors
-	#correlations = location_zscores.map(lambda row: ( (row[0][0], row[1][0] ), np.corrcoef (list(row[0][1]), list(row[1][1]))[1,0] if len(list(row[0][1])) == len(list(row[1][1])) else False ))
-	#correlations.map(mean()*-1 / 2) + 1.0 )
-	#print('Correlations')
-	#print(correlations.take(100))
-	#print('Correlations count')
-	#return euclid_dist
 
 
 # key = (location, year) => [(dim1, val), (dim2, val), (dim3, val)]
@@ -153,16 +138,14 @@ def get_euc_distances(ref,zscores,location_dimensions,location_dates):
 
 # computes the zscore and euclidean distance for each 
 def get_zscore_comparison(df):
-	df.describe(['value']).show()
-	dims  = df.select('dimension_labels').distinct().collect()
+	dims  = df.select('dimension_id').distinct().collect()
 	times = df.select('interval').distinct().collect()
 	# Filters table to dimension we want to get mean and average for
 	# doing this way for now..
 	# replace the values in the rdd with zscore values 
-	dist_zscores = global_settings.sc.emptyRDD()
-	corr_zscores = global_settings.sc.emptyRDD()
+	dist_zscores, corr_zscores = global_settings.sc.emptyRDD(), global_settings.sc.emptyRDD()
 	for dim in dims:
-		dimension_df = df.where(col("dimension_labels").isin(dim.dimension_labels))
+		dimension_df = df.where(col("dimension_id").isin(dim.dimension_id))
 		for time in times: 
 			time_dim_df = dimension_df.where(col("interval").isin(time.interval))
 			if time_dim_df.count() > 1:	
@@ -173,16 +156,9 @@ def get_zscore_comparison(df):
 				d_zscores = dimension_df.rdd.map(lambda row: (((row[2], row[3]), (row[4], row[5]) if stddev == 0 else (row[4],(float(row[5]) - mean) / stddev) )))
 				c_zscores = dimension_df.rdd.map(lambda row: (((row[2], row[4]), (row[3], row[5]) if stddev == 0 else (row[3],(float(row[5]) - mean) / stddev) )))
 				#dim_zscores = dimension_df.rdd.map(lambda row: ((row[2], row[3, row[4]] ),((row[5]) if stddev == 0 else (float(row[5]) - mean) / stddev) )).groupByKey().map(lambda x: (x[0], list(x[1]))) 
-				print(dim.dimension_labels)
-				#print(corr_zscores.take(10))
-
+				print(dim.dimension_id)
 				dist_zscores = dist_zscores.union(d_zscores)
 				corr_zscores = corr_zscores.union(c_zscores)
-	print('Ensure all values inclued:')
-	print(dist_zscores.count())
-	#dist_zscores = dist_zscores.groupByKey().map(lambda x: (x[0], list(x[1])))
-	print(dist_zscores.take(30))
-	corr_zscores = corr_zscores.groupByKey().map(lambda x: (x[0], list(x[1])))
 	return dist_zscores,corr_zscores
 
 
@@ -224,12 +200,9 @@ def compare_locations(df, ref_locale, locale_class, sc,dim_instances = 'all', in
 	for ref in df.select('locale').distinct().collect():
 		dims = dimensions.value[ref.locale]
 		date_range = dates.value[ref.locale]
-		get_euc_distances(ref,dist_zscores,dims,date_range)
+		euc_averages = get_euc_distances(ref,dist_zscores,dims,date_range)
 		
-		print(date_range)
-		print(dims)
-
 	
-	return zscores, ref_locale
+	return euc_averages, ref_locale
 	
 	
