@@ -142,7 +142,6 @@ def get_zscore_comparison(df):
 	times = df.select('interval').distinct().collect()
 	# Filters table to dimension we want to get mean and average for
 	# doing this way for now..
-	# replace the values in the rdd with zscore values 
 	dist_zscores, corr_zscores = global_settings.sc.emptyRDD(), global_settings.sc.emptyRDD()
 	for dim in dims:
 		dimension_df = df.where(col("dimension_id").isin(dim.dimension_id))
@@ -150,8 +149,8 @@ def get_zscore_comparison(df):
 			time_dim_df = dimension_df.where(col("interval").isin(time.interval))
 			if time_dim_df.count() > 1:	
 				mean,stddev = get_dim_stats(time_dim_df)
-				# takes in dataframe limited to single dimension, returns key of location, year, value of zscore
-				# reduces by zscore to produce vectors like so [(US:CA, y1 -> (zscore, zscore, zscore)
+				# For correlations, produces vector like so (US:CA, dim1) -> [zscore, zscore, zscore], (US:CA, dim2) -> [zscore, zscore, zscore]
+				# For distances, produces vector like so (US:CA, y1) -> [(zscore, zscore, zscore)], (US:CA, y2) -> [(zscore,zscore,zscore)]
 				print(mean, stddev)
 				d_zscores = dimension_df.rdd.map(lambda row: (((row[2], row[3]), (row[4], row[5]) if stddev == 0 else (row[4],(float(row[5]) - mean) / stddev) )))
 				c_zscores = dimension_df.rdd.map(lambda row: (((row[2], row[4]), (row[3], row[5]) if stddev == 0 else (row[3],(float(row[5]) - mean) / stddev) )))
@@ -162,12 +161,6 @@ def get_zscore_comparison(df):
 	return dist_zscores,corr_zscores
 
 
-def euclidean(ref,val):
-	print(ref)
-	if len(list(ref)) != len(list(val)):
-		return False
-	else:
-		return spatial.distance.euclidean(list(ref),list(val))
 
 
 # MUST CALCULATE MEAN AND STDDEV within each dimension
