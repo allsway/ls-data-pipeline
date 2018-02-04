@@ -7,6 +7,7 @@ import sys
 from pyspark.sql import Row
 from pyspark.sql import SQLContext
 from pyspark.sql import SparkSession
+from pyspark.sql import DataFrameWriter
 from pyspark.sql.functions import *
 from pyspark.sql.column import Column, _to_java_column, _to_seq
 #from calculate_metrics import *
@@ -181,37 +182,54 @@ def get_zscore_comparison(df):
 
 def write_to_db(df):
 	    # Saving data to a JDBC source
-	print(df.show())
-	user = get_user()
-	password = get_pass()
-	db_name = get_db()
 
-	postgres_df = df.write \
-        .format("jdbc") \
-        .option("url", "jdbc:postgresql:" + db_name) \
-        .option("dbtable", "distances") \
-        .option("user", user) \
-        .option("password", password) \
-        .save()
+	print(df.show())
+	user_config = get_user()
+	password_config = get_pass()
+	db_name = get_db()
+	url = 'jdbc:postgresql://' + get_ip() + ':5432/' + db_name + '?user=' + user_config +'&password=' + password_config 
+
+	#df.write.jdbc(url = 'jdbc:postgresql:' + db_name, 
+	#	table = 'euclidean_distances',
+	#	mode = 'overwrite',
+	#	user = user,
+	#	password = password
+	
+	#postgres_df = df.write. \
+     #   .format("jdbc") \
+     #   .options (driver="org.postgresql.Driver",
+      #  	url="jdbc:postgresql:" + db_name,
+      #  	dbtable="euc_distances"),
+      #  	user = user_config,
+      #  	password=password_config).mode('append')
+      #  .save()	
+
+	#postgres_df = df.write.format("jdbc") \
+    #    .option("driver", "org.postgresql.Driver") \
+    #    .option("url", 'jdbc:postgresql://' + db_name) \
+    #    .option("dbtable", 'euc_distances') \
+    #    .mode('overwrite') \
+     #   .save()
+
 
 
 # Reduces set of dimensions to the ones that are the same between the two locations
 def compare_dimensions(row):
-
-
 	ref_dictionary = dict(zip(row[4], row[3]))
 	comp_dictionary = dict(zip(row[7], row[6]))
-		
-	if set(row.ref_dimensions) != set(row.comp_dimensions):
-		for i,dim in row.ref_dimensions:
-			if dim not in row.comp_dimensions:
-				del(row.ref_zscore[i])
-		for i,dim in row.comp_dimensions:
-			if dim not in row.ref_dimensions:
-				del(row.comp_zscores[i])
+	if(set(row[4]) != set(row[7])):
+		ref_keys = set(ref_dictionary.keys())
+		comp_keys = set(comp_dictionary.keys())
+		for item in ref_dictionary.keys():
+  			if not comp_dictionary.has_key(item):
+  				del ref_dictionary[item]
+  		for item in comp_dictionary.keys():
+  			if not ref_dictionary.has_key(item):
+  				del comp_dictionary[item]
+	
 	distance = float('nan')
-	distance = spatial.distance.euclidean(row.ref_zscores, row.comp_zscores)
-	return row.locale, row.comp_locale, distance, row.interval
+	distance = spatial.distance.euclidean(ref_dictionary.values(), comp_dictionary.values())
+	return row[2], row[5], distance, row[0]
 	
 
 
@@ -228,7 +246,7 @@ def get_euclidean_distances(new_df):
 		col('ref_zscores').alias('comp_zscores'),
 		col('ref_dimensions').alias('comp_dimensions')), ['interval','locale_class']) #.sort(col('locale').desc())
 	
-	
+	print(distance_rows.show())
 	schema = StructType([
 		StructField("locale", StringType(), False),
 		StructField("locale2", StringType(), False),
@@ -263,7 +281,7 @@ def get_euclidean_distances(new_df):
 	# Write this to S3 at this point so that we store the individual distances by year
 	write_to_db(distance_df)
 	
-	euclidean_means = distance_df.groupBy(distance_df.locale,distance_df.locale2).agg(avg('distance'))
+	euclidean_means = distance_df.groupBy(distance_df.locale,distance_df.comp_locale).agg(avg('distance'))
 	# Write the distance and year to database?? 
 	# ideal world, would want the distances for every time, and then the distances averaged
 	print('Euclidean means')
@@ -321,7 +339,6 @@ def get_correlations(new_df):
 	correlation_df = correlation_df.repartition('locale')
 	corr_means = correlation_df.groupBy(correlation_df.locale,correlation_df.comp_locale).agg(avg(correlation_df.correlation))
 	corr_means = corr_means.select('locale','comp_locale','avg(correlation)', ((corr_means['avg(correlation)']*-1/2) + 1 ).alias("adjusted_correlation"))
-	# * ((-1 / 2) + 1.0
 	print('Correlation means:')
 	print(corr_means.show())
 	return corr_means
@@ -332,38 +349,33 @@ def get_correlations(new_df):
 # Get the zscores, distance, correlation and weighted distance between all locations	
 def compare_locations(df, locale_class):
 	# Remove the values we don't care about	
-	new_df = df.select('locale','interval','dimension_id','value','locale_class')
+	filtered_df = df.select('locale','interval','dimension_id','value','locale_class')
 	# new_df = new_df.where(col('dimension_labels').isin('Total') == False)
-	new_df = new_df.where(col('locale_class').like('US') == False)
+	filtered_df = filtered_df.where(col('locale_class').like('US') == False)
 	#new_df = new_df.where(col('locale_class').like('US:ST:PL') == False)
 
-	print(new_df.show())
-	new_df = get_zscore_comparison(new_df)
-	print(new_df.show())
+	print(filtered_df.show())
+	filtered_df = get_zscore_comparison(filtered_df)
+	print(filtered_df.show())
 	
-	#means = get_euclidean_distances(new_df)
-	corrs = get_correlations(new_df)
+	means = get_euclidean_distances(filtered_df)
+	corrs = get_correlations(filtered_df)
 	print(corrs.show())
 	# Join our final correlations and distances, and multiply together
-	#joined_locations = means.join(corrs, ['locale','locale2'],'inner')
-	#print(joined_locations.show())
+	final_joined_locs = means.join(corrs, ['locale','comp_locale'], 'inner')
+	final_joined_locs = final_joined_locs.select('locale','comp_locale',
+		'avg(distance)', 'avg(correlation)',
+		(final_joined_locs['avg(correlation)']* final_joined_locs['avg(distance)'] ).alias("weighted_distance"))
+	print(final_joined_locs.show())
 	return means
 
 	
-	
-	
-	#print('Num partititons')
-	#print(new_df.rdd.getNumPartitions())
-
-	#new_df = new_df.repartition('dimension_id')
-	#print('After repartitioning')
-	#print(new_df.rdd.getNumPartitions())
-		# Testing partitioning
-	#print(new_df.rdd.getNumPartitions())
-	
-	
-	## For each partition: 
-		## For each subset of the file 
+	# Next steps:
+		# make sure that the distance is doing the same checking as correlations (checkbox) 
+		# Figure out if you can make the correlation calculation faster????
+		# Make sure that the file can be saved to postgres!!!
+		# Add multiplication between distance and correlation (checkbox)
+		# Add reading of gzip files and full path to S3 data...
 
 	
 
