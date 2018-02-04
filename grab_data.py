@@ -85,15 +85,7 @@ def connect_to_datastore(df):
         .load()
 
 	print(postgres_df)
-    # Saving data to a JDBC source
-  #  jdbcDF.write \
-   #     .format("jdbc") \
-    #    .option("url", "jdbc:postgresql:" + db_name) \
-     #   .option("dbtable", "metrics") \
-    #    .option("user", "username") \
-     #   .option("password", "password") \
-   #     .save()
-#	print(df.show())
+
 	
 
 def get_file_contents(file):
@@ -188,10 +180,28 @@ def get_zscore_comparison(df):
 
 
 def write_to_db(df):
-	print('his')
+	    # Saving data to a JDBC source
+	print(df.show())
+	user = get_user()
+	password = get_pass()
+	db_name = get_db()
+
+	postgres_df = df.write \
+        .format("jdbc") \
+        .option("url", "jdbc:postgresql:" + db_name) \
+        .option("dbtable", "distances") \
+        .option("user", user) \
+        .option("password", password) \
+        .save()
+
 
 # Reduces set of dimensions to the ones that are the same between the two locations
 def compare_dimensions(row):
+
+
+	ref_dictionary = dict(zip(row[4], row[3]))
+	comp_dictionary = dict(zip(row[7], row[6]))
+		
 	if set(row.ref_dimensions) != set(row.comp_dimensions):
 		for i,dim in row.ref_dimensions:
 			if dim not in row.comp_dimensions:
@@ -199,6 +209,7 @@ def compare_dimensions(row):
 		for i,dim in row.comp_dimensions:
 			if dim not in row.ref_dimensions:
 				del(row.comp_zscores[i])
+	distance = float('nan')
 	distance = spatial.distance.euclidean(row.ref_zscores, row.comp_zscores)
 	return row.locale, row.comp_locale, distance, row.interval
 	
@@ -224,8 +235,6 @@ def get_euclidean_distances(new_df):
 		StructField("interval", StringType(), False),
 		StructField("distance", FloatType(), False)])
 		
-	#distance_test = distance_rows.rdd.map(lambda row: (compare_dimensions(row)))
-	#test_df = distance_rows.rdd.map(lambda row: compare_dimensions(row))
 	print('distance test:\n')
 	print(distance_rows.rdd.getNumPartitions())
 
@@ -251,8 +260,8 @@ def get_euclidean_distances(new_df):
 	
 	print('Distance dataframe:')
 	print(distance_df.show())
-	# Write this to S3 at this point 
-	
+	# Write this to S3 at this point so that we store the individual distances by year
+	write_to_db(distance_df)
 	
 	euclidean_means = distance_df.groupBy(distance_df.locale,distance_df.locale2).agg(avg('distance'))
 	# Write the distance and year to database?? 
@@ -262,64 +271,60 @@ def get_euclidean_distances(new_df):
 	return euclidean_means
 	
 
-# Reduces set of year values to the ones that are the same between the two locations
+# Reduces set of year values to the ones that are the same between the two locations, and returns correlation between them
 def compare_years(row):
-	if set(row.ref_intervals) != set(row.comp_intervals):
-		for i,dim in row.ref_intervals:
-			if dim not in row.comp_intervals:
-				del(row.ref_zscores[i])
-		for i,dim in row.comp_intervals:
-			if dim not in row.ref_intervals:
-				del(row.comp_zscores[i])
-				
-	#test_corr = Statistics.corr(row.ref_zscores, row.comp_zscores, 'pearson')
-	#print(ref_zscores.take(5))
-	#distance = np.corrcoef(row.ref_zscores, row.comp_zscores)[0][1]
-	print(distance)
-	return row.locale, row.comp_locale, row.ref_zscores, row.comp_zscores, row.dimension_id
+	ref_dictionary = dict(zip(row[4], row[3]))
+	comp_dictionary = dict(zip(row[7], row[6]))
+	if(set(row[4]) != set(row[7])):
+		ref_keys = set(ref_dictionary.keys())
+		comp_keys = set(comp_dictionary.keys())
+		for item in ref_dictionary.keys():
+  			if not comp_dictionary.has_key(item):
+  				del ref_dictionary[item]
+  		for item in comp_dictionary.keys():
+  			if not ref_dictionary.has_key(item):
+  				del comp_dictionary[item]
+	correlation = float('nan')
+	if len(ref_dictionary) > 0 and len(comp_dictionary) > 0:
+		correlation = float(np.corrcoef(ref_dictionary.values(), comp_dictionary.values())[0][1])
+	return row[2], row[5], row[0], correlation
 
 
-# Returns the correlations between two locations
+# Returns the average correlations over tme between two locations, takes in filtered dataframe of original data
 def get_correlations(new_df):
-	print('Hi')
 	# Groups each row by location and dimension, and gets vector of year values for each (loc, dimension) 
 	correlation_rows = new_df.select('locale','interval','dimension_id','zscore','locale_class').groupBy(new_df.locale,
 		new_df.dimension_id,new_df.locale_class).agg(func.collect_list('zscore'),func.collect_list('interval')).withColumnRenamed("collect_list(zscore)", "ref_zscores").withColumnRenamed("collect_list(interval)", "ref_intervals")
 	print(correlation_rows.show())
-
-	# makes cartesian dataframe joined on dimension
-	correlation_rows = correlation_rows.join(correlation_rows.select('dimension_id',
+	
+	joined_df = correlation_rows.join(correlation_rows.select('dimension_id','locale_class',
 		col('locale').alias('comp_locale'),
 		col('ref_zscores').alias('comp_zscores'),
-		col('ref_intervals').alias('comp_intervals')), 'dimension_id')
+		col('ref_intervals').alias('comp_intervals')), ['dimension_id', 'locale_class'])
 	print('In correlations')
-	
-	# explode list, turn into vector? 
-	#correlation_rows.rdd.map()
-	
-	print(correlation_rows.show())
+		
+	print(joined_df.show())
 	schema = StructType([
 		StructField("locale", StringType(), False),
-		StructField("locale2", StringType(), False),
-		StructField("ref_zscores", StringType(), False),
-		StructField("comp_zscores", StringType(), False),
+		StructField("comp_locale", StringType(), False),
 		StructField("dimension_id", StringType(), False),
+		StructField("correlation", FloatType(), False)
 		])
 
-	correlations = correlation_rows.rdd.map(compare_years)
-	#print(correlations.take(5))
-
-	#print_test = correlation_rows.rdd.map(lambda row: (row.locale, type(row.ref_zscores), row.comp_zscores))
-	#print(print_test.take(5))
-	# spell it out 
+	correlations = joined_df.rdd.map(compare_years)
+	print(correlations.take(10))
 		
-	#print(correlations.take(5))
 	correlation_df = global_settings.sqlContext.createDataFrame(correlations, schema)
 	print('Correlations:')
 	print(correlation_df.show())
-	#corr_means = correlation_df.groupBy(correlation_df.locale,correlation_df.locale2).agg(avg('correlation'))
-	#print(corr_means.show())
-	#return corr_means
+	print(correlation_df.rdd.getNumPartitions())
+	correlation_df = correlation_df.repartition('locale')
+	corr_means = correlation_df.groupBy(correlation_df.locale,correlation_df.comp_locale).agg(avg(correlation_df.correlation))
+	corr_means = corr_means.select('locale','comp_locale','avg(correlation)', ((corr_means['avg(correlation)']*-1/2) + 1 ).alias("adjusted_correlation"))
+	# * ((-1 / 2) + 1.0
+	print('Correlation means:')
+	print(corr_means.show())
+	return corr_means
 
 
 
@@ -338,7 +343,7 @@ def compare_locations(df, locale_class):
 	
 	#means = get_euclidean_distances(new_df)
 	corrs = get_correlations(new_df)
-
+	print(corrs.show())
 	# Join our final correlations and distances, and multiply together
 	#joined_locations = means.join(corrs, ['locale','locale2'],'inner')
 	#print(joined_locations.show())
