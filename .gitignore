@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.txt
+*.out
 config.txt.livestories
 *calculate_metrics.py.safe
 *calculate_metrics_numpy.py
