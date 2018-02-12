@@ -12,6 +12,9 @@ Calculate the similarity metrics for all indicators in the original dataset and 
 ### Architecture
 ![alt text](https://github.com/allsway/ls-data-pipeline/blob/master/imgs/livestories_pipeline.png)
 
+### Running spark job
+`./batch_process.sh`
+
 ### Metric example
 
 ```
