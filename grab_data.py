@@ -40,7 +40,6 @@ def get_output_bucket():
 def get_ip():
 	return config.get('Dataconnector', 'ip')
 	
-	
 def get_user():
 	return config.get('Dataconnector', 'user')
 
@@ -55,7 +54,6 @@ def get_connection():
 def write_to_db(df,table):
 
 	print("Writing to db..." + table)
-	#print(df.show())
 	user_config = get_user()
 	password_config = get_pass()
 	#url = 'jdbc:postgresql://' + get_ip() + ':5432/' + db_name + '?user=' + user_config +'&password=' + password_config 
@@ -94,7 +92,6 @@ def get_file_contents(file):
 
 		dataframe = global_settings.sqlContext.read.format('com.databricks.spark.csv').options( delimiter='\t', 
 			schema=schema2).load(filename)
-		#print (dataframe.show())	
 	
 		old_columns = dataframe.schema.names
 		print(old_columns)
@@ -113,10 +110,7 @@ def get_file_contents(file):
 def get_files(objects):
 	#print(objects)
 	list = objects['Contents']
-	list = ['digested/data/COM.POLICYMAP.US.GOV.US.DOC.CENSUS.FASTFOOD/observations/COM.POLICYMAP.US.GOV.US.DOC.CENSUS.FASTFOOD:REST.tsv.gz',
-'digested/data/COM.POLICYMAP.US.GOV.US.DOC.CENSUS.FASTFOOD/observations/COM.POLICYMAP.US.GOV.US.DOC.CENSUS.FASTFOOD:RESTPEOPLERATE.tsv.gz',
-'digested/data/COM.POLICYMAP.US.GOV.US.DOC.CENSUS.FASTFOOD/observations/COM.POLICYMAP.US.GOV.US.DOC.CENSUS.FASTFOOD:RESTRATE.tsv.gz'
-]
+
 	distance_matrix = map(get_file_contents, list)
 
 
@@ -143,11 +137,9 @@ def connect_to_s3():
 # Returns a Dataframe with the zscore calculated based on each dimension 
 def get_zscore_comparison(df):
 	# Get the mean and stddev for each dimension
-	mean_df = df.groupBy(df.dimension_id,df.interval).agg(avg('value'),stddev('value'))
-	
-	#sdev = df.groupBy(df.dimension_id,df.interval).agg(stddev('value'))
+	mean_df = df.groupBy(df.dimension_id,df.interval).agg(avg('value'),stddev('value'))	
 	# broadcast join on catalyst join flag 
-	df = df.join(broadcast(mean_df), ['interval', 'dimension_id'], 'inner')
+	df = df.join(mean_df, ['interval', 'dimension_id'], 'inner')
 	#df = df.join(sdev, ['interval', 'dimension_id'], 'inner')
 	df = df.withColumn('stddev', df["stddev_samp(value)"].cast(FloatType()))
 	df = df.withColumn('avg', df["avg(value)"].cast(FloatType()))
@@ -220,7 +212,9 @@ def get_euclidean_distances(new_df):
 	#print(distance_df.show())
 	# Write this to postgres at this point so that we store the individual distances by year
 	#distance_df.rdd.persist()
-	#distance_df.repartition('locale') # this might be redundant
+	distance_df.repartition(1000) # this might be redundant
+	print(distance_df.rdd.getNumPartitions())
+
 	distance_df.rdd.persist()
 	write_to_db(distance_df,'distances_over_time')
 	
@@ -248,32 +242,53 @@ def compare_years(row):
 		correlation = float(np.corrcoef(ref_dictionary.values(), comp_dictionary.values())[0][1])
 	return row[2], row[5], row[0], correlation, row[1]
 
+# cutting the dimension ID into shorter pieces
+def split_dimension(row):
+	if len(row[1].split('>')) > 1:
+  		clean_dim = row[1].split('>')[1:]
+  		return clean_dim, row[3]
+  	else: 
+  		return row[1],row[3]
+
+# Add the locale class column to our dataframe 
+def add_in_clean_dim(filtered_df):
+	dimension_col = filtered_df.rdd.map(split_dimension)
+	print(dimension_col.take(5))
+	schema = StructType([
+		StructField("dimension_id", StringType(), False),
+		StructField("locale", StringType(), False) ])
+	filtered_df = filtered_df.drop('dimension_id')
+	clean_dim_df = global_settings.sqlContext.createDataFrame(dimension_col, schema)
+	filtered_df = filtered_df.join(clean_dim_df,'locale','inner')
+	return filtered_df
+
+
 # Returns the average correlations over tme between two locations, takes in filtered dataframe of original data
 def get_correlations(new_df):
 	# Let's trim our dimension column, which currently includes the study ID 
-	new_df = new_df.withColumn('dimension_id',func.split(new_df.dimension_id, '>')[1])
-	print('After split:')
-	#print(new_df.show())
+	#new_df = add_in_clean_dim(new_df)
+	print(new_df.show())
 	# Groups each row by location and dimension, and gets vector of year values for each (loc, dimension) 
 	correlation_rows = new_df.select('locale','interval','dimension_id',
 		'zscore','indicator_id','locale_class').groupBy(new_df.locale,
 		new_df.dimension_id,new_df.indicator_id, 
 		new_df.locale_class).agg(func.collect_list('zscore'),
 		func.collect_list('interval')).withColumnRenamed("collect_list(zscore)", 'ref_zscores').withColumnRenamed("collect_list(interval)", "ref_intervals")
-	
 	# Creates a joined set of location to every other location pairs on 
-	joined_df = correlation_rows.join(correlation_rows.select('dimension_id','indicator_id', 'locale_class',
+	correlation_rows = correlation_rows.join(correlation_rows.select('dimension_id','indicator_id', 'locale_class',
 		col('locale').alias('comp_locale'),
 		col('ref_zscores').alias('comp_zscores'),
 		col('ref_intervals').alias('comp_intervals')), ['dimension_id', 'indicator_id','locale_class'])
-	joined_df = joined_df.drop('locale_class')
-	#print(joined_df.show())
 	
+	# did this make it faster???
+	correlation_rows = correlation_rows.drop('locale_class')
+	#correlation_rows.repartition(1000)
+	
+	print(correlation_rows.show())
 	# Compares the the values over a set of years, and reduces each vector to the intersecting set of years
 	# Returns the correlations for each location/location pair 
-	correlations = joined_df.rdd.map(compare_years)
-	#print(correlations.take(10))
-		
+	correlations = correlation_rows.rdd.map(compare_years)
+	print(correlations.take(5))	
 	schema = StructType([
 		StructField("locale", StringType(), False),
 		StructField("comp_locale", StringType(), False),
@@ -283,22 +298,21 @@ def get_correlations(new_df):
 		])
 	
 	correlation_df = global_settings.sqlContext.createDataFrame(correlations, schema)
-	correlation_df.rdd.persist()
+	#correlation_df.rdd.persist()
 	#print(correlation_df.show())
 	# might want to persist here
-	write_to_db(correlation_df,'correlations_by_dimension')
-
+	#write_to_db(correlation_df,'correlations_by_dimension')
+	#correlation_df.repartition('locale')
 	print('Correlations:')
 	print(correlation_df.rdd.getNumPartitions())
-	correlation_df = correlation_df.repartition('locale')
-	corr_means = correlation_df.groupBy(correlation_df.locale,
+	correlation_df = correlation_df.groupBy(correlation_df.locale,
 		correlation_df.comp_locale,correlation_df.indicator_id).agg(avg(correlation_df.correlation), 
 		func.collect_list('dimension_id'))
-	corr_means = corr_means.select('locale','comp_locale','indicator_id','collect_list(dimension_id)', 
-		((corr_means['avg(correlation)']*-1/2) + 1 ).alias("adjusted_correlation"))
+	print(correlation_df.show())
+	correlation_df = correlation_df.select('locale','comp_locale','indicator_id','collect_list(dimension_id)', 
+		((correlation_df['avg(correlation)']*-1/2) + 1 ).alias("adjusted_correlation"))
 	print('Correlation means:')
-	#print(corr_means.show())
-	return corr_means
+	return correlation_df
 
 # Get the locale class from the locale field
 def python_regex(row):
@@ -321,25 +335,22 @@ def compare_locations(df, locale_class):
 	filtered_df = df.where(col('locale').like('US') == False) # Remove values that only correspond to US (nothing to compare to)
 	filtered_df = add_in_locale_class(filtered_df)
 	filtered_df = get_zscore_comparison(filtered_df)
-	#filtered_df.persist()
+	#filtered_df.rdd.persist()
 	# Takes in the 5 column data file with the addition of zscores, and returns the average distances over time between locations
 	means = get_euclidean_distances(filtered_df)
 	# Takes in the default data with zscores added, and returns the average correlations over dimensions between locations
 	corrs = get_correlations(filtered_df)
-	#print(corrs.show())
 	# Join our final correlations and distances, and multiply together
 	final_joined_locs = means.join(corrs, ['locale','comp_locale','indicator_id'], 'inner')
-	#print(final_joined_locs.show())
+	print(final_joined_locs.show())
 	final_joined_locs = final_joined_locs.select('locale','comp_locale',
 		'adjusted_correlation', 
 		col('collect_list(interval)').alias('compared_intervals'), 
 		 col('collect_list(dimension_id)').alias('compared_dimensions'),
 		(final_joined_locs['adjusted_correlation']*final_joined_locs['avg(distance)'] ).alias("weighted_distance"),
 		'indicator_id')
-
-	#print(final_joined_locs.show())
-	write_to_db(final_joined_locs,'weighted_distances')
-
+	#final_joined_locs.rdd.persist()
+	#write_to_db(final_joined_locs,'weighted_distances')
 	
 	# Next steps:
 		# Figure out if you can make the correlation calculation faster????
