@@ -56,7 +56,6 @@ def write_to_db(df,table):
 	print("Writing to db..." + table)
 	user_config = get_user()
 	password_config = get_pass()
-	#url = 'jdbc:postgresql://' + get_ip() + ':5432/' + db_name + '?user=' + user_config +'&password=' + password_config 
 
 	df.write \
 		.format("jdbc") \
@@ -69,16 +68,13 @@ def write_to_db(df,table):
 		.save()
 
 
-# Gets the 
+# Gets the actual S3 file, and calls compare_locations on the file
 def get_file_contents(file):
 	print (file)
-	#if file['Key'] is not None:
-	#	name = file['Key']
-	name = file
-	if 'tsv.gz' in name and 'ACS' not in name:
+	if file['Key'] is not None:
+		name = file['Key']
 		indicator_id = name.split('.')[0]
 		filename = 's3a://' + get_bucket() +  '/' + name.encode('utf-8')
-		#filename =  's3a://' +  name
 		print(filename)
 			
 		# read in data without headers from S3
@@ -93,24 +89,18 @@ def get_file_contents(file):
 		dataframe = global_settings.sqlContext.read.format('com.databricks.spark.csv').options( delimiter='\t', 
 			schema=schema2).load(filename)
 	
-		old_columns = dataframe.schema.names
-		print(old_columns)
-		new_columns = ["indicator_id", "locale", "interval","dimension_id","value"]
 		# Set the column headers for the file
 		dataframe = dataframe.select(col("_c0").alias("indicator_id"),
 			 col("_c1").alias("locale"),
 			 col("_c2").alias("interval"),
 			 col("_c3").alias("dimension_id"),
 			 col("_c4").alias("value"))
-		#print(dataframe.show())
 		compare_locations(dataframe,indicator_id)
 
 
 # Handle files
 def get_files(objects):
-	#print(objects)
 	list = objects['Contents']
-
 	distance_matrix = map(get_file_contents, list)
 
 
@@ -120,16 +110,16 @@ def connect_to_s3():
 	global_settings.sc = pyspark.SparkContext()
 	global_settings.sqlContext = SQLContext(global_settings.sc)
 	calling_format = boto.s3.connection.OrdinaryCallingFormat
+	# connect to S3 bucket, OrdinaryCallingFormat allows getting of capitalized buckets 
 	connection = boto.s3.connect_to_region('us-west-2',
        aws_access_key_id=get_key(),
        aws_secret_access_key=get_secret(),
-       is_secure=True,               # uncomment if you are not using ssl
+       is_secure=True,            
        calling_format = boto.s3.connection.OrdinaryCallingFormat()
     )
 	bucket = connection.get_bucket(get_bucket())
 	client = boto3.client('s3')
 	bucket = get_bucket()
-	print(bucket)
 	objects = client.list_objects(Bucket = bucket)
 	get_files(objects)
 
@@ -138,14 +128,13 @@ def connect_to_s3():
 def get_zscore_comparison(df):
 	# Get the mean and stddev for each dimension
 	mean_df = df.groupBy(df.dimension_id,df.interval).agg(avg('value'),stddev('value'))	
-	# broadcast join on catalyst join flag 
+	# Tried broadcasting the mean_df table hear to speed up time (since mean_df is small) 
 	df = df.join(mean_df, ['interval', 'dimension_id'], 'inner')
-	#df = df.join(sdev, ['interval', 'dimension_id'], 'inner')
 	df = df.withColumn('stddev', df["stddev_samp(value)"].cast(FloatType()))
 	df = df.withColumn('avg', df["avg(value)"].cast(FloatType()))
 	df = df.withColumn('value2', df["value"].cast(FloatType()))
-
-	#print(df.show())
+	
+	# Calculates zscores
 	df = df.rdd.map(lambda row: ( row.interval , row.dimension_id, row.indicator_id,
 		row.locale, row.value, row.locale_class,  
 		float(row.value) if (math.isnan(float(row.stddev)) or float(row.stddev) == 0) else (float(row.value2) - float(row.avg)) / float(row.stddev) ))
@@ -160,10 +149,9 @@ def get_zscore_comparison(df):
 		StructField("zscore", FloatType(), False)
 		])
 
+	# Puts our RDD back into DF structure
 	returned_df = global_settings.sqlContext.createDataFrame(df, schema)
-	#print(returned_df.show())
 	return returned_df
-
 
 # Reduces set of dimensions to the ones that are the same between the two locations
 def compare_dimensions(row):
@@ -189,16 +177,15 @@ def get_euclidean_distances(new_df):
 		'locale_class').groupBy(new_df.locale,
 		new_df.interval,new_df.indicator_id,new_df.locale_class).agg(func.collect_list('zscore'),
 		func.collect_list('dimension_id')).withColumnRenamed("collect_list(zscore)", "ref_zscores").withColumnRenamed("collect_list(dimension_id)", "ref_dimensions")
-	print('Chceking distances...')
-	# Join the dataframe to itself on interval, resulting in a location x location table
+	print('Checking distances...')
+	# Join the dataframe to itself on interval, resulting in a location,year x location,year table
 	distance_rows = distance_rows.join(distance_rows.select('interval', 'indicator_id','locale_class',
 		col('locale').alias('comp_locale'),
 		col('ref_zscores').alias('comp_zscores'),
 		col('ref_dimensions').alias('comp_dimensions')), ['interval','indicator_id','locale_class']) #.sort(col('locale').desc())
 	distance_rows = distance_rows.drop('locale_class')
-	print(distance_rows.rdd.getNumPartitions())
+	# Reduces the dimensions to the intersection of dimensions for each location,year
 	checked_distances = distance_rows.rdd.map(compare_dimensions)
-	print('Distances after verification')
 		
 	schema = StructType([
 		StructField("locale", StringType(), False),
@@ -208,18 +195,15 @@ def get_euclidean_distances(new_df):
 		StructField("indicator_id", StringType(), False),
 		])
 
+	# Returns RDD into DF with schema above
 	distance_df = global_settings.sqlContext.createDataFrame(checked_distances, schema)
-	#print(distance_df.show())
-	# Write this to postgres at this point so that we store the individual distances by year
-	#distance_df.rdd.persist()
-	distance_df.repartition(1000) # this might be redundant
-	print(distance_df.rdd.getNumPartitions())
-
-	distance_df.rdd.persist()
+	# distance_df.repartition(500) 
+	# Writes the distances for each year to a DB
 	write_to_db(distance_df,'distances_over_time')
-	
+	# Gets the average distances
 	euclidean_means = distance_df.groupBy(distance_df.locale,
 		distance_df.indicator_id,distance_df.comp_locale).agg(avg('distance'), func.collect_list('interval')) 
+	# returns average distances for each location,location pair 
 	return euclidean_means	
 
 # Reduces set of year values to the ones that are the same between the two locations, and returns correlation between them
@@ -263,10 +247,10 @@ def add_in_clean_dim(filtered_df):
 	return filtered_df
 
 
-# Returns the average correlations over tme between two locations, takes in filtered dataframe of original data
+# Returns the average correlations over time between two locations, takes in filtered dataframe of original data
 def get_correlations(new_df):
 	# Let's trim our dimension column, which currently includes the study ID 
-	#new_df = add_in_clean_dim(new_df)
+	# new_df = add_in_clean_dim(new_df)
 	print(new_df.show())
 	# Groups each row by location and dimension, and gets vector of year values for each (loc, dimension) 
 	correlation_rows = new_df.select('locale','interval','dimension_id',
@@ -274,21 +258,16 @@ def get_correlations(new_df):
 		new_df.dimension_id,new_df.indicator_id, 
 		new_df.locale_class).agg(func.collect_list('zscore'),
 		func.collect_list('interval')).withColumnRenamed("collect_list(zscore)", 'ref_zscores').withColumnRenamed("collect_list(interval)", "ref_intervals")
-	# Creates a joined set of location to every other location pairs on 
+	# Creates a joined set of location to every other location pairs on dimension_id
 	correlation_rows = correlation_rows.join(correlation_rows.select('dimension_id','indicator_id', 'locale_class',
 		col('locale').alias('comp_locale'),
 		col('ref_zscores').alias('comp_zscores'),
 		col('ref_intervals').alias('comp_intervals')), ['dimension_id', 'indicator_id','locale_class'])
 	
-	# did this make it faster???
 	correlation_rows = correlation_rows.drop('locale_class')
-	#correlation_rows.repartition(1000)
 	
-	print(correlation_rows.show())
-	# Compares the the values over a set of years, and reduces each vector to the intersecting set of years
-	# Returns the correlations for each location/location pair 
+	# Returns the correlations for each location/location pair, only calculates correlation if there are more than 4 year values 
 	correlations = correlation_rows.rdd.map(compare_years)
-	print(correlations.take(5))	
 	schema = StructType([
 		StructField("locale", StringType(), False),
 		StructField("comp_locale", StringType(), False),
@@ -298,11 +277,6 @@ def get_correlations(new_df):
 		])
 	
 	correlation_df = global_settings.sqlContext.createDataFrame(correlations, schema)
-	#correlation_df.rdd.persist()
-	#print(correlation_df.show())
-	# might want to persist here
-	#write_to_db(correlation_df,'correlations_by_dimension')
-	#correlation_df.repartition('locale')
 	print('Correlations:')
 	print(correlation_df.rdd.getNumPartitions())
 	correlation_df = correlation_df.groupBy(correlation_df.locale,
@@ -333,31 +307,24 @@ def add_in_locale_class(filtered_df):
 # Get the zscores, distance, correlation and weighted distance between all locations	
 def compare_locations(df, locale_class):
 	filtered_df = df.where(col('locale').like('US') == False) # Remove values that only correspond to US (nothing to compare to)
-	filtered_df = add_in_locale_class(filtered_df)
-	filtered_df = get_zscore_comparison(filtered_df)
-	#filtered_df.rdd.persist()
+	filtered_df = add_in_locale_class(filtered_df) # Adds in Locale Class column
+	filtered_df = get_zscore_comparison(filtered_df) # Adds in zscores based on each dimension
 	# Takes in the 5 column data file with the addition of zscores, and returns the average distances over time between locations
 	means = get_euclidean_distances(filtered_df)
 	# Takes in the default data with zscores added, and returns the average correlations over dimensions between locations
 	corrs = get_correlations(filtered_df)
 	# Join our final correlations and distances, and multiply together
 	final_joined_locs = means.join(corrs, ['locale','comp_locale','indicator_id'], 'inner')
-	print(final_joined_locs.show())
 	final_joined_locs = final_joined_locs.select('locale','comp_locale',
 		'adjusted_correlation', 
 		col('collect_list(interval)').alias('compared_intervals'), 
 		 col('collect_list(dimension_id)').alias('compared_dimensions'),
 		(final_joined_locs['adjusted_correlation']*final_joined_locs['avg(distance)'] ).alias("weighted_distance"),
 		'indicator_id')
-	#final_joined_locs.rdd.persist()
-	#write_to_db(final_joined_locs,'weighted_distances')
+		
+	# Writes final weighted distances to DB
+	write_to_db(final_joined_locs,'weighted_distances')
 	
-	# Next steps:
-		# Figure out if you can make the correlation calculation faster????
-		# Add reading of gzip files and full path to S3 data...
-
-	
-
 
 config = configparser.ConfigParser()
 config.read(sys.argv[1])
