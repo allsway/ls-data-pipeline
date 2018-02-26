@@ -10,7 +10,7 @@ Currently LiveStories data is only available for internal use in tsv format or v
 Calculate the similarity metrics for all indicators in the original dataset and return all calculated results to the original data store for use by LiveStories' front end API. 
 
 ### Architecture
-![alt text](https://github.com/allsway/ls-data-pipeline/imgs/livestories_pipeline (2).jpg)
+![alt text](https://github.com/allsway/ls-data-pipeline/imgs/livestories_pipeline_final.jpg)
 
 ### Running spark job
 `./batch_process.sh`
